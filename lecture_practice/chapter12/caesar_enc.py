@@ -17,8 +17,8 @@ def encrypt_file(input_file, output_file, key):
         file.write(encrypted_text)
 
 # 예시
-input_filename = 'chapter12\\proverbs.txt'
-encrypted_filename = 'chapter12\\proverbs(enc).txt'
+input_filename = 'lecture_practice\\phones.txt'
+encrypted_filename = 'lecture_practice\\phones(enc).txt'
 encryption_key = 3
 # 파일 암호화
 encrypt_file(input_filename, encrypted_filename, encryption_key)
