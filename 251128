@@ -1,0 +1,116 @@
+!pip install xgboost
+
+import pandas as pd
+import numpy as np
+import re
+from xgboost import XGBClassifier
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.preprocessing import LabelEncoder, OneHotEncoder, StandardScaler
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.metrics import classification_report, accuracy_score
+
+# 2. 전처리 (이전과 동일)
+target_classes = [3.5, 4.0, 4.5, 5.0]
+df = df[df['Reviews'].isin(target_classes)].copy()
+df = df[['Type', 'Reviews', 'No of Reviews', 'Comments', 'Price_Range']]
+
+def clean_reviews_count(x):
+    if pd.isna(x): return 0
+    match = re.search(r'(\d+)', str(x))
+    return int(match.group(1)) if match else 0
+
+df['No of Reviews'] = df['No of Reviews'].apply(clean_reviews_count)
+df['Comments'] = df['Comments'].fillna('')
+df['Type'] = df['Type'].fillna('')
+df['Price_Range'] = df['Price_Range'].fillna('Unknown')
+
+X = df.drop('Reviews', axis=1)
+y = df['Reviews']
+
+le = LabelEncoder()
+y_encoded = le.fit_transform(y)
+
+# 3. 파이프라인 구축
+preprocessor = ColumnTransformer(
+    transformers=[
+        ('comments_tfidf', TfidfVectorizer(stop_words='english', max_features=1000), 'Comments'),
+        ('type_tfidf', TfidfVectorizer(stop_words='english', max_features=100), 'Type'),
+        ('price_onehot', OneHotEncoder(handle_unknown='ignore'), ['Price_Range']),
+        ('num_scaler', StandardScaler(), ['No of Reviews'])
+    ]
+)
+
+# 4. 하이퍼파라미터 튜닝 (GridSearchCV, 5-Fold CV)
+# 모델별 파라미터 그리드 설정
+# XGBoost 라이브러리 부재로 GradientBoostingClassifier 사용 (sklearn 내장)
+model_params = [
+
+    # Logistic Regression
+    {
+        'name': 'Logistic Regression',
+        'model': LogisticRegression(max_iter=2000, random_state=42),
+        'params': {
+            'classifier__C': [0.1, 1, 10],
+            'classifier__solver': ['lbfgs', 'liblinear']
+        }
+    },
+
+    # Random Forest
+    {
+        'name': 'Random Forest',
+        'model': RandomForestClassifier(random_state=42),
+        'params': {
+            'classifier__n_estimators': [100, 200, 300],
+            'classifier__max_depth': [10, 20, None],
+            'classifier__min_samples_split': [2, 5, 10],
+            'classifier__min_samples_leaf': [1, 2, 4]
+        }
+    },
+
+    # XGBoost
+    {
+        'name': 'XGBoost',
+        'model': XGBClassifier(
+            objective='multi:softmax',
+            num_class=len(np.unique(y_encoded)),
+            eval_metric='mlogloss',
+            random_state=42,
+            tree_method='hist'
+        ),
+        'params': {
+            'classifier__learning_rate': [0.05, 0.1, 0.2],   # 현실적 영향도 多
+            'classifier__n_estimators': [150, 200, 300],     # 150~300 가장 많이 사용
+            'classifier__max_depth': [3, 5],                 # 텍스트 기준 Best
+            'classifier__subsample': [0.7, 0.8],             # 오버피팅 제어 핵심
+            'classifier__colsample_bytree': [0.8]            # 문헌 상 default near-best
+        }
+    }
+]
+
+X_train, X_test, y_train, y_test = train_test_split(X, y_encoded, test_size=0.2, random_state=42, stratify=y_encoded)
+
+best_models = {}
+
+for mp in model_params:
+    pipe = Pipeline([('preprocessor', preprocessor), ('classifier', mp['model'])])
+
+    clf = GridSearchCV(pipe, mp['params'], cv=5, scoring='accuracy',
+                       n_jobs=-1, verbose=1)
+
+    clf.fit(X_train, y_train)
+
+    print(f"Model: {mp['name']}")
+    print(f"Best Params: {clf.best_params_}")
+    print(f"Best CV Score: {clf.best_score_:.4f}")
+
+    final_model = clf.best_estimator_
+    y_pred = final_model.predict(X_test)
+    acc = accuracy_score(y_test, y_pred)
+    print(f"Test Set Accuracy: {acc:.4f}")
+    print("-" * 30)
+
+    best_models[mp['name']] = final_model
